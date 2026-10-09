@@ -5334,10 +5334,13 @@ mod tests {
             let cached = chat.engine.kv_mirror().n_tokens() as i32;
             let mut answer = String::new();
             let decoded = prompt_tokens_decoded(&mut chat, |chat| {
+                let mut text = TextStream::default();
                 chat.ask(prompt.into(), |event| {
-                    if let TurnEvent::Written(written) = event {
-                        answer = written;
-                    }
+                    text.send(&event, |chunk| {
+                        if let CompletionChunk::Done(response) = chunk {
+                            answer = response.content;
+                        }
+                    })
                 })
                 .unwrap();
             });

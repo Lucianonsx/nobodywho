@@ -632,6 +632,7 @@ pub enum HuggingFaceError {
 
 // TextToSpeech errors
 
+#[cfg(not(target_os = "emscripten"))]
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum TextToSpeechError {
     // ── Config / language ────────────────────────────────────────────
@@ -820,6 +821,7 @@ pub enum TextToSpeechError {
 
 // SpeechToText errors
 
+#[cfg(not(target_os = "emscripten"))]
 #[derive(Debug, thiserror::Error)]
 pub enum SpeechToTextError {
     #[error("Error initializing SpeechToText: {0}")]
@@ -835,6 +837,7 @@ pub enum SpeechToTextError {
     Audio(String),
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl From<HuggingFaceError> for SpeechToTextError {
     fn from(e: HuggingFaceError) -> Self {
         SpeechToTextError::Init(e.to_string())
@@ -843,6 +846,7 @@ impl From<HuggingFaceError> for SpeechToTextError {
 
 // VAD errors
 
+#[cfg(not(target_os = "emscripten"))]
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceActivityDetectionError {
     #[error("Error initializing VAD: {0}")]
@@ -855,6 +859,7 @@ pub enum VoiceActivityDetectionError {
     Audio(String),
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl From<HuggingFaceError> for VoiceActivityDetectionError {
     fn from(e: HuggingFaceError) -> Self {
         VoiceActivityDetectionError::Init(e.to_string())

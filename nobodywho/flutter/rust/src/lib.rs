@@ -1215,9 +1215,8 @@ pub fn new_tool_impl(
 ) -> Result<RustTool, String> {
     let json_schema = dart_function_type_to_json_schema(&runtime_type, parameter_descriptions)?;
 
-    // TODO: this seems to silently block forever if we get a type error on the dart side.
-    //       it'd be *much* better to fail hard and throw a dart exception if that happens
-    //       we might have to fix it on the dart side...
+    // Dart-side wrapper is responsible for converting all callback failures into
+    // explicit error strings so this await resolves deterministically.
     let sync_callback = move |json: serde_json::Value| {
         futures::executor::block_on(async { function(json.to_string()).await })
     };
@@ -1257,16 +1256,10 @@ pub fn new_python_tool(
     RustTool { tool, schema }
 }
 
-/// Converts a Dart function runtimeType string directly to a JSON schema
-/// Example input: "({required String a, required int b}) => String" or "() => String"
-/// Returns a JSON schema for the function parameters
-/// XXX: this whole function is vibe-coded, and hence the implementation is pretty messy...
-#[tracing::instrument(ret, level = "debug")]
-fn dart_function_type_to_json_schema(
+fn parse_tool_function_signature(
     runtime_type: &str,
-    parameter_descriptions: &std::collections::HashMap<String, String>,
-) -> Result<serde_json::Value, String> {
-    let (parsed_parameters, return_type) = match parse::runtime_type_parser(runtime_type) {
+) -> Result<(Vec<(&str, serde_json::Value)>, &str), String> {
+    match parse::runtime_type_parser(runtime_type) {
         Ok((_, (pp, rt))) => (pp, rt),
         Err(nom::Err::Error(e)) => {
             if runtime_type.starts_with('(')
@@ -1299,13 +1292,14 @@ fn dart_function_type_to_json_schema(
                 e.input
             ))
         }
-        Err(_) => return Err("Something has gone horribly wrong while parsing!".into()),
-    };
-
-    if parse::return_type_parser(return_type).is_err() {
-        tracing::warn!("Return type of this tool should be `String or Future<String>`. Anything else will be cast to string, which might lead to unexpected results.")
+        Err(_) => Err("Something has gone horribly wrong while parsing!".into()),
     }
+}
 
+fn build_tool_parameters_schema(
+    parsed_parameters: Vec<(&str, serde_json::Value)>,
+    parameter_descriptions: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
 
@@ -1323,22 +1317,33 @@ fn dart_function_type_to_json_schema(
         properties.insert(parameter_name.into(), parameter_type);
     }
 
-    tracing::debug!(
-        "\n\n{}\n\n",
-        serde_json::json!({
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": false
-        })
-    );
-
-    Ok(serde_json::json!({
+    serde_json::json!({
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": false
-    }))
+    })
+}
+
+/// Converts a Dart function runtimeType string directly to a JSON schema
+/// Example input: "({required String a, required int b}) => String" or "() => String"
+/// Returns a JSON schema for the function parameters
+#[tracing::instrument(ret, level = "debug")]
+fn dart_function_type_to_json_schema(
+    runtime_type: &str,
+    parameter_descriptions: &std::collections::HashMap<String, String>,
+) -> Result<serde_json::Value, String> {
+    let (parsed_parameters, return_type) = parse_tool_function_signature(runtime_type)?;
+
+    if parse::return_type_parser(return_type).is_err() {
+        tracing::warn!("Return type of this tool should be `String or Future<String>`. Anything else will be cast to string, which might lead to unexpected results.")
+    }
+
+    let schema = build_tool_parameters_schema(parsed_parameters, parameter_descriptions);
+
+    tracing::debug!("\n\n{schema}\n\n");
+
+    Ok(schema)
 }
 
 // TODO:
@@ -2094,5 +2099,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("Supported types"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_parameter_description_is_applied() {
+        let mut descriptions = std::collections::HashMap::new();
+        descriptions.insert("text".to_string(), "The input text".to_string());
+
+        let schema = dart_function_type_to_json_schema(
+            "({required String text}) => String",
+            &descriptions,
+        )
+        .unwrap();
+
+        assert_eq!(
+            schema["properties"]["text"]["description"],
+            serde_json::Value::String("The input text".to_string())
+        );
+    }
+
+    #[test]
+    fn test_complex_nested_types_are_parsed() {
+        let schema = dart_function_type_to_json_schema(
+            "({required Map<String, List<int>> values}) => Future<String>",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap();
+
+        let expected = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": { "type": "integer" }
+                    }
+                }
+            },
+            "required": ["values"],
+            "additionalProperties": false
+        });
+        assert_eq!(schema, expected);
     }
 }

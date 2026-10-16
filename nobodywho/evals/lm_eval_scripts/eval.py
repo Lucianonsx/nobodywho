@@ -69,7 +69,7 @@ def get_nobodywho_version() -> dict:
         import importlib.metadata
         result["version"] = importlib.metadata.version("nobodywho")
     except Exception:
-        pass
+        logger.debug("Failed to resolve nobodywho package version.", exc_info=True)
 
     # Try to get git commit if installed from local repo (editable install)
     try:
@@ -101,7 +101,7 @@ def get_nobodywho_version() -> dict:
             if status:
                 result["git_dirty"] = True
     except Exception:
-        pass
+        logger.warning("Failed to collect nobodywho git metadata.", exc_info=True)
 
     return result
 
@@ -115,7 +115,7 @@ def get_gpu_info() -> str:
             if "VGA" in line or "3D controller" in line:
                 return line.split(": ", 1)[-1]
     except Exception:
-        pass
+        logger.debug("Failed to inspect GPU via lspci; trying sysfs fallback.", exc_info=True)
 
     # Fallback to sysfs (works without lspci on NixOS)
     try:
@@ -134,7 +134,7 @@ def get_gpu_info() -> str:
             if driver and pci_id:
                 return f"{driver} ({pci_id})"
     except Exception:
-        pass
+        logger.warning("Failed to inspect GPU via sysfs fallback.", exc_info=True)
 
     return "unknown"
 
@@ -152,7 +152,7 @@ def get_cpu_model() -> str:
                 if "model name" in line:
                     return line.split(":")[1].strip()
     except Exception:
-        pass
+        logger.warning("Failed to read CPU model from /proc/cpuinfo.", exc_info=True)
     return "unknown"
 
 

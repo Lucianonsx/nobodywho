@@ -12,7 +12,7 @@ use std::path::Path;
 /// Hardware target for ONNX Runtime execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Device {
-    /// Try CUDA first, silently fall back to CPU if unavailable.
+    /// Try CUDA first, then fall back to CPU if unavailable.
     Auto,
     Cpu,
     Cuda,
@@ -39,10 +39,31 @@ fn cuda_provider(device: Device) -> Result<Option<ExecutionProviderDispatch>, or
     use ort::ep::{ExecutionProvider, CUDA};
     Ok(match device {
         Device::Cuda => Some(CUDA::default().build().error_on_failure()),
-        Device::Auto if CUDA::default().is_available().unwrap_or(false) => {
-            Some(CUDA::default().build().fail_silently())
+        Device::Auto => match CUDA::default().is_available() {
+            Ok(true) => {
+                tracing::debug!(
+                    "ONNX Device::Auto detected CUDA support; enabling CUDA provider with CPU fallback."
+                );
+                Some(CUDA::default().build().fail_silently())
+            }
+            Ok(false) => {
+                tracing::info!(
+                    "ONNX Device::Auto could not use CUDA on this host; using CPU execution provider."
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "ONNX Device::Auto failed while probing CUDA availability; using CPU execution provider."
+                );
+                None
+            }
+        },
+        Device::Cpu => {
+            tracing::debug!("ONNX Device::Cpu selected; using CPU execution provider.");
+            None
         }
-        _ => None,
     })
 }
 

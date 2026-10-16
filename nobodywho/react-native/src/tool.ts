@@ -3,6 +3,43 @@ import {
   type ToolParameter,
 } from "../generated/ts/nobodywho";
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function runToolPollingLoop(
+  inner: RustTool,
+  parseArgs: (argumentsJson: string) => unknown[],
+  callTool: (...args: any[]) => string | Promise<string>,
+): Promise<void> {
+  for (;;) {
+    let call;
+    try {
+      call = await inner.nextPendingCall();
+    } catch (error) {
+      console.error("Tool polling failed; stopping loop:", error);
+      break;
+    }
+
+    if (call == null) break;
+
+    try {
+      const args = parseArgs(call.argumentsJson);
+      const result = await callTool(...args);
+      inner.resolvePendingCall(call.callId, result);
+    } catch (error) {
+      try {
+        inner.resolvePendingCall(call.callId, `Error: ${toErrorMessage(error)}`);
+      } catch (resolveError) {
+        console.error(
+          `Failed to resolve pending tool call '${call.callId}':`,
+          resolveError,
+        );
+      }
+    }
+  }
+}
+
 /**
  * Recursively convert a value from JSON based on a JSON Schema type.
  *
@@ -112,24 +149,10 @@ export class Tool {
     this._inner = RustTool.newAsync(opts.name, opts.description, toolParams) as RustTool;
 
     // Start the polling loop. It exits when the RustTool is dropped
-    // (nextPendingCall returns null).
-    const poll = async () => {
-      for (;;) {
-        const call = await this._inner.nextPendingCall();
-        if (call == null) break;
-        try {
-          const args = parseArgs(call.argumentsJson);
-          const result = await opts.call(...args);
-          this._inner.resolvePendingCall(call.callId, result);
-        } catch (e) {
-          this._inner.resolvePendingCall(
-            call.callId,
-            `Error: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      }
-    };
-    poll();
+    // (nextPendingCall returns null) or when polling itself fails.
+    void runToolPollingLoop(this._inner, parseArgs, opts.call).catch((error) => {
+      console.error("Tool polling loop crashed unexpectedly:", error);
+    });
   }
 
   /** Get the JSON schema for this tool's parameters. */
@@ -139,4 +162,4 @@ export class Tool {
 }
 
 /** @internal Exported for testing only. */
-export { convertValue as _convertValue };
+export { convertValue as _convertValue, runToolPollingLoop as _runToolPollingLoop };

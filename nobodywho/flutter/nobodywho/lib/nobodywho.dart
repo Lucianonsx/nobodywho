@@ -473,16 +473,23 @@ class Tool {
 
     // Make it a String -> Future<String> function
     final wrappedFunction = (String jsonString) async {
-      // Decode the input string as json
-      Map<String, dynamic> jsonMap = json.decode(jsonString);
-      // Make it a map of symbols, to make Function.apply happy
-
-      Map<Symbol, dynamic> namedParams = Map.fromEntries(
-        jsonMap.entries.map((e) => MapEntry(Symbol(e.key), jsonConversion(schema!["properties"][e.key], e.value))),
-      );
-
-      // Call the function and catch any errors
       try {
+        if (schema == null) {
+          return "Error: Tool schema is not initialized.";
+        }
+        // Decode the input string as json
+        final jsonMap = json.decode(jsonString) as Map<String, dynamic>;
+        // Make it a map of symbols, to make Function.apply happy
+        final namedParams = Map<Symbol, dynamic>.fromEntries(
+          jsonMap.entries.map(
+            (e) => MapEntry(
+              Symbol(e.key),
+              jsonConversion(schema!["properties"][e.key], e.value),
+            ),
+          ),
+        );
+
+        // Call the function and catch any errors
         final result = Function.apply(function, [], namedParams);
 
         // Handle async tools and return
